@@ -1,0 +1,242 @@
+<?php
+require_once '../db.php';
+checkRole(['student']);
+
+$student_id = $_SESSION['user_id'];
+
+// Get student info with class section
+$student_query = "SELECT s.*, d.dept_name, c.class_name, c.section
+                  FROM students s
+                  LEFT JOIN departments d ON s.department_id = d.id
+                  LEFT JOIN classes c ON s.class_id = c.id
+                  WHERE s.id = $student_id";
+$student = $conn->query($student_query)->fetch_assoc();
+
+// Get filter parameters
+$filter_month = isset($_GET['month']) ? $_GET['month'] : date('Y-m');
+$filter_year = isset($_GET['year']) ? $_GET['year'] : date('Y');
+
+// Get attendance for selected month
+$attendance_query = "SELECT sa.*, sub.subject_name, sub.subject_code 
+                     FROM student_attendance sa
+                     LEFT JOIN subjects sub ON sa.subject_id = sub.id
+                     WHERE sa.student_id = $student_id 
+                     AND DATE_FORMAT(sa.attendance_date, '%Y-%m') = '$filter_month'
+                     ORDER BY sa.attendance_date DESC";
+$attendance_records = $conn->query($attendance_query);
+
+// Get monthly statistics
+$stats_query = "SELECT 
+                COUNT(*) as total_days,
+                SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present,
+                SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent,
+                SUM(CASE WHEN status = 'late' THEN 1 ELSE 0 END) as late
+                FROM student_attendance
+                WHERE student_id = $student_id 
+                AND DATE_FORMAT(attendance_date, '%Y-%m') = '$filter_month'";
+$stats_result = $conn->query($stats_query);
+$stats = $stats_result->fetch_assoc();
+
+$total_days = $stats['total_days'];
+$percentage = $total_days > 0 ? round(($stats['present'] / $total_days) * 100, 2) : 0;
+
+// Get yearly comparison
+$yearly_query = "SELECT 
+                 DATE_FORMAT(attendance_date, '%Y-%m') as month,
+                 COUNT(*) as total,
+                 SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present
+                 FROM student_attendance
+                 WHERE student_id = $student_id 
+                 AND YEAR(attendance_date) = '$filter_year'
+                 GROUP BY DATE_FORMAT(attendance_date, '%Y-%m')
+                 ORDER BY month";
+$yearly_data = $conn->query($yearly_query);
+
+// Display class section
+$section_names = [
+    'Civil' => '🏗️ Civil Engineering',
+    'Mechanical' => '⚙️ Mechanical Engineering',
+    'CSE-A' => '💻 Computer Science - A',
+    'CSE-B' => '💻 Computer Science - B',
+    'Electrical' => '⚡ Electrical Engineering'
+];
+
+$display_section = isset($section_names[$student['section']]) ? 
+                   $section_names[$student['section']] : 
+                   htmlspecialchars($student['section'] ?? $student['class_name']);
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Report - Student</title>
+    <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body class="dashboard-container">
+    <nav class="navbar">
+        <div>
+            <h1>🎓 Attendance Hub - My Attendance Report</h1>
+        </div>
+        <div class="user-info">
+            <a href="index.php" class="btn btn-secondary">← Back</a>
+            <span>👨‍🎓 <?php echo htmlspecialchars($student['full_name']); ?></span>
+            <a href="../logout.php" class="btn btn-danger">🚪 Logout</a>
+        </div>
+    </nav>
+
+    <div class="main-content">
+        <div style="background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
+            <h2>📊 Attendance Report</h2>
+            <p><strong>Roll Number:</strong> <?php echo htmlspecialchars($student['roll_number']); ?></p>
+            <p><strong>Class/Section:</strong> <?php echo $display_section; ?></p>
+            <p><strong>Department:</strong> <?php echo htmlspecialchars($student['dept_name']); ?></p>
+        </div>
+
+        <div class="table-container" style="margin-bottom: 30px;">
+            <h3>🔍 Filter Report</h3>
+            <form method="GET" style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 15px;">
+                <div class="form-group">
+                    <label>Select Month:</label>
+                    <input type="month" name="month" value="<?php echo $filter_month; ?>">
+                </div>
+                
+                <div class="form-group">
+                    <label>Select Year:</label>
+                    <select name="year">
+                        <?php for($y = date('Y'); $y >= 2020; $y--): ?>
+                            <option value="<?php echo $y; ?>" <?php echo $filter_year == $y ? 'selected' : ''; ?>>
+                                <?php echo $y; ?>
+                            </option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                
+                <div class="form-group" style="display: flex; align-items: flex-end;">
+                    <button type="submit" class="btn btn-primary">View Report</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <h3>📅 Total Days</h3>
+                <div class="stat-value"><?php echo $total_days; ?></div>
+            </div>
+            
+            <div class="stat-card">
+                <h3>✅ Present</h3>
+                <div class="stat-value" style="color: #28a745;"><?php echo $stats['present']; ?></div>
+            </div>
+            
+            <div class="stat-card">
+                <h3>❌ Absent</h3>
+                <div class="stat-value" style="color: #dc3545;"><?php echo $stats['absent']; ?></div>
+            </div>
+            
+            <div class="stat-card">
+                <h3>⏰ Late</h3>
+                <div class="stat-value" style="color: #ffc107;"><?php echo $stats['late']; ?></div>
+            </div>
+            
+            <div class="stat-card">
+                <h3>📈 Attendance %</h3>
+                <div class="stat-value" style="color: <?php echo $percentage >= 75 ? '#28a745' : '#dc3545'; ?>">
+                    <?php echo $percentage; ?>%
+                </div>
+            </div>
+        </div>
+
+        <div class="table-container" style="margin-top: 30px;">
+            <h3>📝 Detailed Attendance for <?php echo date('F Y', strtotime($filter_month.'-01')); ?></h3>
+            
+            <?php if ($attendance_records->num_rows > 0): ?>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Day</th>
+                            <th>Subject</th>
+                            <th>Status</th>
+                            <th>Remarks</th>
+                            <th>Marked At</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php while ($record = $attendance_records->fetch_assoc()): ?>
+                        <tr>
+                            <td><?php echo date('d M Y', strtotime($record['attendance_date'])); ?></td>
+                            <td><?php echo date('l', strtotime($record['attendance_date'])); ?></td>
+                            <td>
+                                <?php if ($record['subject_name']): ?>
+                                    <span class="badge badge-info">
+                                        <?php echo htmlspecialchars($record['subject_name']); ?>
+                                        (<?php echo htmlspecialchars($record['subject_code']); ?>)
+                                    </span>
+                                <?php else: ?>
+                                    -
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php
+                                $status_class = '';
+                                if ($record['status'] === 'present') $status_class = 'badge-success';
+                                elseif ($record['status'] === 'absent') $status_class = 'badge-danger';
+                                else $status_class = 'badge-warning';
+                                ?>
+                                <span class="badge <?php echo $status_class; ?>">
+                                    <?php echo strtoupper($record['status']); ?>
+                                </span>
+                            </td>
+                            <td><?php echo htmlspecialchars($record['remarks'] ?? '-'); ?></td>
+                            <td><?php echo date('H:i', strtotime($record['marked_at'])); ?></td>
+                        </tr>
+                        <?php endwhile; ?>
+                    </tbody>
+                </table>
+            <?php else: ?>
+                <div class="alert alert-info">No attendance records found for <?php echo date('F Y', strtotime($filter_month.'-01')); ?></div>
+            <?php endif; ?>
+        </div>
+
+        <div class="table-container" style="margin-top: 30px;">
+            <h3>📊 Yearly Comparison - <?php echo $filter_year; ?></h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Month</th>
+                        <th>Total Days</th>
+                        <th>Present</th>
+                        <th>Attendance %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    if ($yearly_data->num_rows > 0):
+                        while ($year_data = $yearly_data->fetch_assoc()): 
+                            $year_percentage = $year_data['total'] > 0 ? round(($year_data['present'] / $year_data['total']) * 100, 2) : 0;
+                    ?>
+                    <tr>
+                        <td><?php echo date('F Y', strtotime($year_data['month'].'-01')); ?></td>
+                        <td><?php echo $year_data['total']; ?></td>
+                        <td><span class="badge badge-success"><?php echo $year_data['present']; ?></span></td>
+                        <td>
+                            <strong style="color: <?php echo $year_percentage >= 75 ? '#28a745' : '#dc3545'; ?>">
+                                <?php echo $year_percentage; ?>%
+                            </strong>
+                        </td>
+                    </tr>
+                    <?php 
+                        endwhile;
+                    else:
+                    ?>
+                    <tr>
+                        <td colspan="4" style="text-align: center;">No data available for <?php echo $filter_year; ?></td>
+                    </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
